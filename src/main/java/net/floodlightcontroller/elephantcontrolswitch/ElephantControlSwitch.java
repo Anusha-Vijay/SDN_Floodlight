@@ -9,6 +9,7 @@ import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.packet.Ethernet;
+import net.floodlightcontroller.restserver.IRestApiService;
 import net.floodlightcontroller.util.FlowModUtils;
 import net.floodlightcontroller.util.OFMessageUtils;
 import org.projectfloodlight.openflow.protocol.*;
@@ -19,6 +20,7 @@ import org.projectfloodlight.openflow.types.*;
 import org.projectfloodlight.openflow.util.LRULinkedHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -27,15 +29,15 @@ import java.util.concurrent.ConcurrentSkipListSet;
  * Created by Anushavijay on 11/19/16.
  */
 
-public class ElephantControlSwitch implements IFloodlightModule, IOFMessageListener {
+public class ElephantControlSwitch implements IFloodlightModule, IOFMessageListener,IElephantService {
     protected IFloodlightProviderService floodlightProvider;
     protected Set<Long> macAddresses;
     protected static Logger logger;
-    private static int ELEPHANT_FLOW_BANDWIDTH = 3000;
-    private static int ELEPHANT_FLOW_NUMBER = 1;
-    private static long BLOCK_TIME_VALUE = 60;
+    protected static long ELEPHANT_FLOW_BANDWIDTH = 3000;
+    protected static long BLOCK_TIME_VALUE = 60;
     protected Map<IOFSwitch, Map<Long, OFPort>> macSwitchPortMap;
     protected Map<Long, Long> bListHosts;
+    protected IRestApiService restApi;
 
     // for managing our map sizes
     protected static final int MAX_MACS_SWITCH = 100;
@@ -48,6 +50,7 @@ public class ElephantControlSwitch implements IFloodlightModule, IOFMessageListe
     // more flow-mod defaults
     protected static final short IDLE_TIMEOUT_DEFAULT = 15;
     protected static final short HARD_TIMEOUT_DEFAULT = 5;
+    protected static final short TIME_SUBTRACTED_DEFAULT = 5;
     protected static final short PRIORITY_DEFAULT = 100;
 
     @Override
@@ -83,9 +86,14 @@ public class ElephantControlSwitch implements IFloodlightModule, IOFMessageListe
     public Collection<Class<? extends IFloodlightService>> getModuleDependencies() {
         Collection<Class<? extends IFloodlightService>> l =
                 new ArrayList<>();
+
+
         l.add(IFloodlightProviderService.class);
+        l.add(IRestApiService.class);
         return l;
     }
+
+
 
     @Override
     public void init(FloodlightModuleContext context) throws FloodlightModuleException {
@@ -94,16 +102,17 @@ public class ElephantControlSwitch implements IFloodlightModule, IOFMessageListe
         logger = LoggerFactory.getLogger(ElephantControlSwitch.class);
         macSwitchPortMap = new ConcurrentHashMap<>();
         bListHosts = new ConcurrentHashMap<>();
+        restApi = context.getServiceImpl(IRestApiService.class);
 
     }
-
     @Override
     public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
+
+        restApi.addRestletRoutable(new ElephantWebRoutable());
         floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
         floodlightProvider.addOFMessageListener(OFType.FLOW_REMOVED, this);
         floodlightProvider.addOFMessageListener(OFType.ERROR, this);
     }
-
     @Override
     public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
 
@@ -325,10 +334,10 @@ public class ElephantControlSwitch implements IFloodlightModule, IOFMessageListe
             logger.info("Blacklisted host is {}", sourceMac.getLong());
             long blackListedHostTime = bListHosts.get(sourceMac.getLong());
             logger.info("Blacklisted host time remaining {}", blackListedHostTime);
-            if(blackListedHostTime - HARD_TIMEOUT_DEFAULT == 0)
+            if(blackListedHostTime - TIME_SUBTRACTED_DEFAULT == 0)
                 bListHosts.remove(sourceMac.getLong());
             else {
-                blackListedHostTime = blackListedHostTime - HARD_TIMEOUT_DEFAULT;
+                blackListedHostTime = blackListedHostTime - TIME_SUBTRACTED_DEFAULT;
                 bListHosts.put(sourceMac.getLong(), blackListedHostTime);
                 logger.info("Blocking packets");
 //                this.writePacketOutForPacketIn(sw, pi, OFPort.ZERO);
@@ -433,4 +442,16 @@ public class ElephantControlSwitch implements IFloodlightModule, IOFMessageListe
         sw.write(fmb.build());
     }
 
+
+    @Override
+    public int setBandwidth(int bandwidth) {
+        ELEPHANT_FLOW_BANDWIDTH=bandwidth;
+        return 0;
+    }
+
+    @Override
+    public void getBandwidth() {
+        logger.info("New Bandwidth is {}",ELEPHANT_FLOW_BANDWIDTH);
+        System.out.printf("New Bandwidth is {}"+ELEPHANT_FLOW_BANDWIDTH);
+    }
 }
